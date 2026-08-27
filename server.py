@@ -2,13 +2,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio
 import socket
+import threading
 import time
 
 import psutil
-from fastapi import FastAPI, File, UploadFile, WebSocket
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from zeroconf import IPVersion, ServiceInfo, Zeroconf
+from pyftpdlib.authorizers import DummyAuthorizer
+from pyftpdlib.handlers import FTPHandler
+from pyftpdlib.servers import FTPServer
 
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR / "storage"
@@ -16,6 +20,10 @@ WEB_DIR = BASE_DIR / "web"
 STORAGE_DIR.mkdir(exist_ok=True)
 started_at = time.time()
 mdns = None
+ftp_server = None
+ftp_thread = None
+connected_devices = {}
+connected_lock = threading.Lock()
 
 
 def local_ip():
@@ -54,6 +62,54 @@ def register_mdns():
             mdns = None
 
 
+def start_ftp():
+    global ftp_server, ftp_thread
+    address = local_ip()
+    authorizer = DummyAuthorizer()
+    authorizer.add_user("scinet", "scinet", str(STORAGE_DIR), perm="elradfmwMT")
+    authorizer.add_anonymous(str(STORAGE_DIR), perm="elr")
+
+    class SciNETFTPHandler(FTPHandler):
+        def on_connect(self):
+            with connected_lock:
+                connected_devices[f"ftp:{self.remote_ip}:{self.remote_port}"] = {
+                    "id": f"ftp:{self.remote_ip}:{self.remote_port}",
+                    "ip": self.remote_ip,
+                    "port": self.remote_port,
+                    "type": "FTP",
+                    "agent": "FTP client",
+                    "connected": time.time(),
+                }
+
+        def on_disconnect(self):
+            with connected_lock:
+                connected_devices.pop(f"ftp:{self.remote_ip}:{self.remote_port}", None)
+
+    SciNETFTPHandler.authorizer = authorizer
+    SciNETFTPHandler.passive_ports = range(30000, 30010)
+    SciNETFTPHandler.masquerade_address = address
+    ftp_server = FTPServer((address, 2121), SciNETFTPHandler)
+    ftp_server.max_cons = 20
+    ftp_server.max_cons_per_ip = 5
+
+    def serve():
+        try:
+            print(f"SciNET FTP: ftp://{address}:2121")
+            ftp_server.serve_forever(timeout=1, blocking=True, handle_exit=False)
+        except Exception as exc:
+            print(f"SciNET FTP unavailable: {exc}")
+
+    ftp_thread = threading.Thread(target=serve, name="SciNET-FTP", daemon=True)
+    ftp_thread.start()
+
+
+def stop_ftp():
+    global ftp_server
+    if ftp_server:
+        ftp_server.close_all()
+        ftp_server = None
+
+
 def unregister_mdns():
     global mdns
     if mdns:
@@ -64,7 +120,9 @@ def unregister_mdns():
 @asynccontextmanager
 async def lifespan(app):
     register_mdns()
+    start_ftp()
     yield
+    stop_ftp()
     unregister_mdns()
 
 
@@ -76,6 +134,8 @@ def system_info():
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage(str(BASE_DIR))
     net = psutil.net_io_counters()
+    with connected_lock:
+        devices = list(connected_devices.values())
     return {
         "hostname": socket.gethostname(),
         "cpu": psutil.cpu_percent(interval=None),
@@ -83,6 +143,8 @@ def system_info():
         "disk": {"percent": disk.percent, "used": disk.used, "total": disk.total},
         "network": {"sent": net.bytes_sent, "received": net.bytes_recv},
         "uptime": int(time.time() - started_at),
+        "devices": devices,
+        "device_count": len(devices),
     }
 
 
@@ -128,9 +190,24 @@ async def download_file(filename: str):
 @app.websocket("/ws")
 async def system_socket(websocket: WebSocket):
     await websocket.accept()
+    client = websocket.client
+    device_id = f"web:{client.host}:{client.port}" if client else f"web:{id(websocket)}"
+    user_agent = websocket.headers.get("user-agent", "Browser")
+    with connected_lock:
+        connected_devices[device_id] = {
+            "id": device_id,
+            "ip": client.host if client else "unknown",
+            "port": client.port if client else 0,
+            "type": "Web",
+            "agent": user_agent[:120],
+            "connected": time.time(),
+        }
     try:
         while True:
             await websocket.send_json(system_info())
             await asyncio.sleep(1)
-    except Exception:
+    except (WebSocketDisconnect, Exception):
         pass
+    finally:
+        with connected_lock:
+            connected_devices.pop(device_id, None)
