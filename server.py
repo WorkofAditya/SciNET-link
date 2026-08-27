@@ -34,18 +34,24 @@ def register_mdns():
     address = local_ip()
     if address == "127.0.0.1":
         return
-    mdns = Zeroconf(ip_version=IPVersion.V4Only)
-    info = ServiceInfo(
-        "_http._tcp.local.",
-        "SciNET Link._http._tcp.local.",
-        addresses=[socket.inet_aton(address)],
-        port=8000,
-        server="scinet.local.",
-        properties={"path": "/", "app": "SciNET Link"},
-    )
-    mdns.register_service(info)
-    print("SciNET Link: http://scinet.local:8000")
-    print(f"SciNET Link: http://{address}:8000")
+    try:
+        mdns = Zeroconf(ip_version=IPVersion.V4Only)
+        info = ServiceInfo(
+            "_http._tcp.local.",
+            "SciNET Link._http._tcp.local.",
+            addresses=[socket.inet_aton(address)],
+            port=8000,
+            server="scinet.local.",
+            properties={"path": "/", "app": "SciNET Link"},
+        )
+        mdns.async_register_service(info)
+        print("SciNET Link: http://scinet.local:8000")
+        print(f"SciNET Link: http://{address}:8000")
+    except Exception as exc:
+        print(f"SciNET mDNS unavailable: {exc}")
+        if mdns:
+            mdns.close()
+            mdns = None
 
 
 def unregister_mdns():
