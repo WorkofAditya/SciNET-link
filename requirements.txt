@@ -3,3 +3,4 @@ uvicorn[standard]>=0.34,<1
 psutil>=6,<8
 python-multipart>=0.0.20,<1
 zeroconf>=0.147,<1
+pyftpdlib>=2.0,<3
