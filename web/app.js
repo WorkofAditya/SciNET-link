@@ -1,4 +1,4 @@
-const $ = (id) => document.getElementById(id);
+const $ = id => document.getElementById(id);
 
 function formatBytes(bytes) {
   if (!bytes) return '0 B';
@@ -20,14 +20,43 @@ function formatUptime(seconds) {
 function updateSystem(data) {
   $('hostname').textContent = data.hostname.toUpperCase();
   $('cpu').textContent = Math.round(data.cpu);
-  $('cpuBar').style.width = `${data.cpu}%`;
+  $('cpuBar').style.width = `${Math.min(data.cpu, 100)}%`;
   $('ram').textContent = Math.round(data.memory.percent);
-  $('ramBar').style.width = `${data.memory.percent}%`;
+  $('ramBar').style.width = `${Math.min(data.memory.percent, 100)}%`;
   $('ramDetail').textContent = `${formatBytes(data.memory.used)} / ${formatBytes(data.memory.total)}`;
   $('disk').textContent = Math.round(data.disk.percent);
-  $('diskBar').style.width = `${data.disk.percent}%`;
+  $('diskBar').style.width = `${Math.min(data.disk.percent, 100)}%`;
   $('diskDetail').textContent = `${formatBytes(data.disk.used)} / ${formatBytes(data.disk.total)}`;
   $('uptime').textContent = formatUptime(data.uptime);
+  $('deviceCount').textContent = data.device_count;
+  renderDevices(data.devices || []);
+}
+
+function deviceName(device) {
+  if (device.type === 'FTP') return 'FTP client';
+  const agent = device.agent || '';
+  if (/Android/i.test(agent)) return 'Android device';
+  if (/iPhone|iPad/i.test(agent)) return 'Apple device';
+  if (/Windows/i.test(agent)) return 'Windows device';
+  return 'Web browser';
+}
+
+function renderDevices(devices) {
+  const list = $('deviceList');
+  if (!devices.length) {
+    list.innerHTML = '<div class="empty">No active connections.</div>';
+    return;
+  }
+  list.innerHTML = devices.map(device => `
+    <div class="device">
+      <div class="device-icon">${device.type === 'FTP' ? '↕' : '⌁'}</div>
+      <div class="device-info">
+        <div class="device-name">${escapeHtml(deviceName(device))}</div>
+        <div class="device-meta">${escapeHtml(device.ip)}:${device.port}</div>
+      </div>
+      <span class="device-type">${escapeHtml(device.type)}</span>
+    </div>
+  `).join('');
 }
 
 async function loadFiles() {
@@ -35,22 +64,19 @@ async function loadFiles() {
   const data = await response.json();
   const list = $('fileList');
   if (!data.files.length) {
-    list.innerHTML = '<div class="empty">No files in SciNET storage.</div>';
+    list.innerHTML = '<div class="empty">No files in storage.</div>';
     return;
   }
   list.innerHTML = data.files.map(file => `
     <div class="file-row">
-      <div>
-        <div class="file-name">${escapeHtml(file.name)}</div>
-        <div class="file-size">${formatBytes(file.size)}</div>
-      </div>
+      <div><div class="file-name">${escapeHtml(file.name)}</div><div class="file-size">${formatBytes(file.size)}</div></div>
       <a class="download" href="/api/download/${encodeURIComponent(file.name)}">DOWNLOAD ↓</a>
     </div>
   `).join('');
 }
 
 function escapeHtml(value) {
-  return value.replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+  return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 }
 
 async function uploadFiles(files) {
@@ -59,7 +85,6 @@ async function uploadFiles(files) {
     row.className = 'upload-item';
     row.innerHTML = `<span>${escapeHtml(file.name)}</span><span>UPLOADING...</span>`;
     $('uploadList').prepend(row);
-
     const form = new FormData();
     form.append('file', file);
     try {
@@ -77,12 +102,8 @@ const fileInput = $('fileInput');
 fileInput.addEventListener('change', () => uploadFiles(fileInput.files));
 
 const dropzone = $('dropzone');
-for (const event of ['dragenter', 'dragover']) {
-  dropzone.addEventListener(event, e => { e.preventDefault(); dropzone.classList.add('drag'); });
-}
-for (const event of ['dragleave', 'drop']) {
-  dropzone.addEventListener(event, e => { e.preventDefault(); dropzone.classList.remove('drag'); });
-}
+for (const event of ['dragenter', 'dragover']) dropzone.addEventListener(event, e => { e.preventDefault(); dropzone.classList.add('drag'); });
+for (const event of ['dragleave', 'drop']) dropzone.addEventListener(event, e => { e.preventDefault(); dropzone.classList.remove('drag'); });
 dropzone.addEventListener('drop', e => uploadFiles(e.dataTransfer.files));
 $('refresh').addEventListener('click', loadFiles);
 
