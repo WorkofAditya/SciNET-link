@@ -3,93 +3,74 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#070b12">
-  <title>SciNET Link</title>
+  <meta name="theme-color" content="#0b0d10">
+  <title>SciNET</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="shell">
+  <div class="app-shell">
     <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark">S</div>
-        <div>
-          <div class="brand-name">SCINET</div>
-          <div class="brand-sub">CENTRAL LINK</div>
-        </div>
-      </div>
-      <div class="connection"><span class="dot"></span><span id="connectionText">ONLINE</span></div>
+      <a class="brand" href="/">
+        <span class="brand-mark">S</span>
+        <span class="brand-name">SCINET</span>
+      </a>
+      <div class="top-status"><span class="status-dot"></span><span id="connectionText">ONLINE</span></div>
     </header>
 
     <main>
-      <section class="hero">
+      <section class="page-head">
         <div>
-          <p class="eyebrow">LOCAL TERMINAL</p>
-          <h1>SciNET Link</h1>
-          <p class="hero-copy">Your local bridge between SciNET devices.</p>
+          <div class="section-kicker">SYSTEM</div>
+          <h1>Overview</h1>
         </div>
-        <div class="host-card">
+        <div class="host-info">
           <span>HOST</span>
           <strong id="hostname">SCINET-CORE</strong>
         </div>
       </section>
 
       <section class="stats-grid">
-        <article class="card stat-card">
-          <div class="card-label">CPU LOAD</div>
-          <div class="stat-value"><span id="cpu">0</span><small>%</small></div>
-          <div class="meter"><i id="cpuBar"></i></div>
-        </article>
-        <article class="card stat-card">
-          <div class="card-label">MEMORY</div>
-          <div class="stat-value"><span id="ram">0</span><small>%</small></div>
-          <div class="stat-detail" id="ramDetail">0 / 0 GB</div>
-          <div class="meter"><i id="ramBar"></i></div>
-        </article>
-        <article class="card stat-card">
-          <div class="card-label">DISK</div>
-          <div class="stat-value"><span id="disk">0</span><small>%</small></div>
-          <div class="stat-detail" id="diskDetail">0 / 0 GB</div>
-          <div class="meter"><i id="diskBar"></i></div>
-        </article>
-        <article class="card stat-card">
-          <div class="card-label">UPTIME</div>
-          <div class="stat-value uptime" id="uptime">00:00:00</div>
-          <div class="stat-detail">SCINET SESSION</div>
-        </article>
+        <article class="card stat-card"><div class="label">CPU</div><div class="stat-main"><span id="cpu">0</span><small>%</small></div><div class="meter"><i id="cpuBar"></i></div></article>
+        <article class="card stat-card"><div class="label">MEMORY</div><div class="stat-main"><span id="ram">0</span><small>%</small></div><div class="detail" id="ramDetail">0 / 0 GB</div><div class="meter"><i id="ramBar"></i></div></article>
+        <article class="card stat-card"><div class="label">DISK</div><div class="stat-main"><span id="disk">0</span><small>%</small></div><div class="detail" id="diskDetail">0 / 0 GB</div><div class="meter"><i id="diskBar"></i></div></article>
+        <article class="card stat-card"><div class="label">UPTIME</div><div class="stat-main uptime" id="uptime">00:00:00</div><div class="detail">CURRENT SESSION</div></article>
+      </section>
+
+      <section class="card devices-card">
+        <div class="section-head"><div><div class="label">NETWORK</div><h2>Connected devices</h2></div><div class="device-count"><strong id="deviceCount">0</strong><span>connected</span></div></div>
+        <div id="deviceList" class="device-list"><div class="empty">No active connections.</div></div>
       </section>
 
       <section class="transfer-grid">
         <article class="card transfer-card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">TRANSFER</p>
-              <h2>Send to SciNET</h2>
-            </div>
-            <span class="badge">LOCAL</span>
-          </div>
+          <div class="section-head"><div><div class="label">FILES</div><h2>Upload</h2></div><span class="pill">HTTP</span></div>
           <label class="dropzone" id="dropzone">
             <input type="file" id="fileInput" multiple>
-            <div class="upload-icon">↑</div>
-            <strong>Drop files here</strong>
-            <span>or tap to browse</span>
+            <span class="upload-mark">↑</span>
+            <strong>Choose files</strong>
+            <span>or drag and drop</span>
           </label>
           <div id="uploadList" class="upload-list"></div>
         </article>
 
         <article class="card transfer-card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">STORAGE</p>
-              <h2>Files on SciNET</h2>
-            </div>
-            <button class="ghost" id="refresh">Refresh</button>
-          </div>
-          <div id="fileList" class="file-list"><div class="empty">Scanning storage...</div></div>
+          <div class="section-head"><div><div class="label">FILES</div><h2>Storage</h2></div><button class="button" id="refresh">Refresh</button></div>
+          <div id="fileList" class="file-list"><div class="empty">Loading...</div></div>
         </article>
+      </section>
+
+      <section class="card ftp-card">
+        <div class="section-head"><div><div class="label">TRANSFER SERVICE</div><h2>FTP</h2></div><span class="pill live">ACTIVE</span></div>
+        <div class="ftp-grid">
+          <div><span class="ftp-label">ADDRESS</span><code id="ftpAddress">ftp://SCINET-CORE:2121</code></div>
+          <div><span class="ftp-label">USERNAME</span><code>scinet</code></div>
+          <div><span class="ftp-label">PASSWORD</span><code>scinet</code></div>
+        </div>
+        <p class="ftp-note">FTP uses the same SciNET storage directory. Passive mode uses ports 30000–30009.</p>
       </section>
     </main>
 
-    <footer>SCINET LINK <span>•</span> LOCAL NETWORK TERMINAL</footer>
+    <footer>SCINET</footer>
   </div>
   <script src="/static/app.js"></script>
 </body>
