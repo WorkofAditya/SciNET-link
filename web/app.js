@@ -1,10 +1,17 @@
 const $ = id => document.getElementById(id);
+const trafficHistory = [];
+let previousNetwork = null;
+let previousTime = null;
 
 function formatBytes(bytes) {
   if (!bytes) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   return `${(bytes / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
+}
+
+function formatRate(bytes) {
+  return `${formatBytes(bytes)}/s`;
 }
 
 function formatUptime(seconds) {
@@ -17,23 +24,54 @@ function formatUptime(seconds) {
   return `${d ? `${String(d).padStart(2, '0')}:` : ''}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+function updateTraffic(network) {
+  const now = performance.now();
+  let down = 0;
+  let up = 0;
+  if (previousNetwork && previousTime) {
+    const elapsed = Math.max((now - previousTime) / 1000, 0.1);
+    down = Math.max(0, network.received - previousNetwork.received) / elapsed;
+    up = Math.max(0, network.sent - previousNetwork.sent) / elapsed;
+  }
+  previousNetwork = network;
+  previousTime = now;
+  $('downloadRate').textContent = formatRate(down);
+  $('uploadRate').textContent = formatRate(up);
+  $('receivedTotal').textContent = formatBytes(network.received);
+  $('sentTotal').textContent = formatBytes(network.sent);
+  trafficHistory.push(down + up);
+  if (trafficHistory.length > 40) trafficHistory.shift();
+  const max = Math.max(...trafficHistory, 1);
+  const points = trafficHistory.map((value, index) => {
+    const x = trafficHistory.length === 1 ? 0 : index / (trafficHistory.length - 1) * 600;
+    const y = 140 - (value / max) * 120;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  $('networkLine').setAttribute('points', points.join(' '));
+}
+
 function updateSystem(data) {
   $('hostname').textContent = data.hostname.toUpperCase();
   $('cpu').textContent = Math.round(data.cpu);
+  $('cpuLoad').textContent = `${Math.round(data.cpu)}%`;
   $('cpuBar').style.width = `${Math.min(data.cpu, 100)}%`;
   $('ram').textContent = Math.round(data.memory.percent);
+  $('ramLoad').textContent = `${Math.round(data.memory.percent)}%`;
   $('ramBar').style.width = `${Math.min(data.memory.percent, 100)}%`;
   $('ramDetail').textContent = `${formatBytes(data.memory.used)} / ${formatBytes(data.memory.total)}`;
   $('disk').textContent = Math.round(data.disk.percent);
+  $('diskLoad').textContent = `${Math.round(data.disk.percent)}%`;
   $('diskBar').style.width = `${Math.min(data.disk.percent, 100)}%`;
   $('diskDetail').textContent = `${formatBytes(data.disk.used)} / ${formatBytes(data.disk.total)}`;
   $('uptime').textContent = formatUptime(data.uptime);
   $('deviceCount').textContent = data.device_count;
+  updateTraffic(data.network);
   renderDevices(data.devices || []);
 }
 
 function deviceName(device) {
   if (device.type === 'FTP') return 'FTP client';
+  if (device.type === 'Network') return 'Network device';
   const agent = device.agent || '';
   if (/Android/i.test(agent)) return 'Android device';
   if (/iPhone|iPad/i.test(agent)) return 'Apple device';
@@ -41,18 +79,27 @@ function deviceName(device) {
   return 'Web browser';
 }
 
+function deviceIcon(device) {
+  if (device.type === 'FTP') return '↕';
+  if (device.type === 'Network') return '⌁';
+  const agent = device.agent || '';
+  if (/Android/i.test(agent)) return '▣';
+  if (/iPhone|iPad/i.test(agent)) return '▯';
+  return '⌘';
+}
+
 function renderDevices(devices) {
   const list = $('deviceList');
   if (!devices.length) {
-    list.innerHTML = '<div class="empty">No active connections.</div>';
+    list.innerHTML = '<div class="empty">No devices detected.</div>';
     return;
   }
   list.innerHTML = devices.map(device => `
     <div class="device">
-      <div class="device-icon">${device.type === 'FTP' ? '↕' : '⌁'}</div>
+      <div class="device-icon">${deviceIcon(device)}</div>
       <div class="device-info">
         <div class="device-name">${escapeHtml(deviceName(device))}</div>
-        <div class="device-meta">${escapeHtml(device.ip)}:${device.port}</div>
+        <div class="device-meta">${escapeHtml(device.ip)}${device.mac ? ` · ${escapeHtml(device.mac)}` : device.port ? `:${device.port}` : ''}</div>
       </div>
       <span class="device-type">${escapeHtml(device.type)}</span>
     </div>
@@ -68,10 +115,7 @@ async function loadFiles() {
     return;
   }
   list.innerHTML = data.files.map(file => `
-    <div class="file-row">
-      <div><div class="file-name">${escapeHtml(file.name)}</div><div class="file-size">${formatBytes(file.size)}</div></div>
-      <a class="download" href="/api/download/${encodeURIComponent(file.name)}">DOWNLOAD ↓</a>
-    </div>
+    <div class="file-row"><div><div class="file-name">${escapeHtml(file.name)}</div><div class="file-size">${formatBytes(file.size)}</div></div><a class="download" href="/api/download/${encodeURIComponent(file.name)}">DOWNLOAD ↓</a></div>
   `).join('');
 }
 
@@ -100,7 +144,6 @@ async function uploadFiles(files) {
 
 const fileInput = $('fileInput');
 fileInput.addEventListener('change', () => uploadFiles(fileInput.files));
-
 const dropzone = $('dropzone');
 for (const event of ['dragenter', 'dragover']) dropzone.addEventListener(event, e => { e.preventDefault(); dropzone.classList.add('drag'); });
 for (const event of ['dragleave', 'drop']) dropzone.addEventListener(event, e => { e.preventDefault(); dropzone.classList.remove('drag'); });
@@ -112,10 +155,7 @@ function connectSocket() {
   const socket = new WebSocket(`${protocol}://${location.host}/ws`);
   socket.onopen = () => { $('connectionText').textContent = 'ONLINE'; };
   socket.onmessage = event => updateSystem(JSON.parse(event.data));
-  socket.onclose = () => {
-    $('connectionText').textContent = 'RECONNECTING';
-    setTimeout(connectSocket, 1500);
-  };
+  socket.onclose = () => { $('connectionText').textContent = 'RECONNECTING'; setTimeout(connectSocket, 1500); };
 }
 
 loadFiles().catch(() => { $('fileList').innerHTML = '<div class="empty">Storage unavailable.</div>'; });
