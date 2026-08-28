@@ -9,7 +9,7 @@ import time
 import uuid
 
 import psutil
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from zeroconf import IPVersion, ServiceInfo, Zeroconf
@@ -144,7 +144,7 @@ def system_info():
         devices = {item["id"]: item for item in connected_devices.values()}
     devices.update(discovered)
     with uploads_lock:
-        active_uploads = [dict(item) for item in uploads.values() if item["status"] in {"uploading", "paused", "cancelling"}]
+        active_uploads = [dict(item) for item in uploads.values() if item["status"] in {"uploading", "paused"}]
     return {"hostname": socket.gethostname(), "cpu": psutil.cpu_percent(interval=None), "memory": {"percent": memory.percent, "used": memory.used, "total": memory.total}, "disk": {"percent": disk.percent, "used": disk.used, "total": disk.total}, "network": {"sent": net.bytes_sent, "received": net.bytes_recv}, "uptime": int(time.time() - started_at), "devices": list(devices.values()), "device_count": len(devices), "uploads": active_uploads}
 
 
@@ -168,67 +168,45 @@ async def list_files():
     return {"files": files}
 
 
-@app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+@app.post("/api/upload/start")
+async def upload_start(request: Request):
+    data = await request.json()
+    filename = Path(str(data.get("name") or "unnamed")).name
+    total = max(0, int(data.get("size") or 0))
     upload_id = uuid.uuid4().hex
-    filename = Path(file.filename or "unnamed").name
-    target = STORAGE_DIR / filename
     temp = STORAGE_DIR / f".scinet-{upload_id}.part"
-    total = int(file.headers.get("content-length", 0) or 0)
-    started = time.monotonic()
+    temp.touch()
     with uploads_lock:
-        uploads[upload_id] = {"id": upload_id, "name": filename, "size": 0, "total": total, "speed": 0, "status": "uploading", "started": started, "temp": str(temp)}
-    try:
-        with temp.open("wb") as output:
-            while True:
-                with uploads_lock:
-                    status = uploads[upload_id]["status"]
-                if status == "cancelling":
-                    break
-                if status == "paused":
-                    await asyncio.sleep(0.15)
-                    continue
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                output.write(chunk)
-                with uploads_lock:
-                    item = uploads[upload_id]
-                    item["size"] += len(chunk)
-                    elapsed = max(time.monotonic() - started, 0.001)
-                    item["speed"] = item["size"] / elapsed
-                await asyncio.sleep(0)
-        with uploads_lock:
-            cancelled = uploads[upload_id]["status"] == "cancelling"
-        if cancelled:
-            temp.unlink(missing_ok=True)
-            with uploads_lock:
-                uploads[upload_id]["status"] = "cancelled"
-            return JSONResponse({"id": upload_id, "status": "cancelled"})
-        temp.replace(target)
-        with uploads_lock:
-            uploads[upload_id]["status"] = "complete"
-        return {"id": upload_id, "name": filename, "size": target.stat().st_size, "status": "complete"}
-    except Exception:
-        temp.unlink(missing_ok=True)
-        with uploads_lock:
-            if upload_id in uploads:
-                uploads[upload_id]["status"] = "failed"
-        raise
-    finally:
-        await file.close()
-        await asyncio.sleep(2)
-        with uploads_lock:
-            uploads.pop(upload_id, None)
+        uploads[upload_id] = {"id": upload_id, "name": filename, "size": 0, "total": total, "speed": 0, "status": "uploading", "started": time.monotonic(), "last_chunk": time.monotonic(), "temp": str(temp)}
+    return {"id": upload_id}
 
 
-@app.post("/api/upload/{upload_id}/cancel")
-async def cancel_upload(upload_id: str):
+@app.post("/api/upload/{upload_id}/chunk")
+async def upload_chunk(upload_id: str, request: Request):
     with uploads_lock:
-        if upload_id not in uploads:
+        item = uploads.get(upload_id)
+        if not item:
             return JSONResponse({"error": "Upload not found"}, status_code=404)
-        uploads[upload_id]["status"] = "cancelling"
-    return {"status": "cancelling"}
+        if item["status"] == "paused":
+            return JSONResponse({"error": "Upload is paused"}, status_code=409)
+        if item["status"] != "uploading":
+            return JSONResponse({"error": "Upload is not active"}, status_code=409)
+        temp = Path(item["temp"])
+    chunk = await request.body()
+    if not chunk:
+        return {"received": 0}
+    with temp.open("ab") as output:
+        output.write(chunk)
+    with uploads_lock:
+        item = uploads.get(upload_id)
+        if not item:
+            return JSONResponse({"error": "Upload not found"}, status_code=404)
+        item["size"] += len(chunk)
+        now = time.monotonic()
+        elapsed = max(now - item["last_chunk"], 0.001)
+        item["speed"] = len(chunk) / elapsed
+        item["last_chunk"] = now
+        return {"received": item["size"], "total": item["total"]}
 
 
 @app.post("/api/upload/{upload_id}/pause")
@@ -237,13 +215,43 @@ async def pause_upload(upload_id: str):
         if upload_id not in uploads:
             return JSONResponse({"error": "Upload not found"}, status_code=404)
         current = uploads[upload_id]["status"]
-        if current == "paused":
-            uploads[upload_id]["status"] = "uploading"
-        elif current == "uploading":
+        if current == "uploading":
             uploads[upload_id]["status"] = "paused"
+        elif current == "paused":
+            uploads[upload_id]["status"] = "uploading"
         else:
             return JSONResponse({"status": current})
         return {"status": uploads[upload_id]["status"]}
+
+
+@app.post("/api/upload/{upload_id}/finish")
+async def finish_upload(upload_id: str):
+    with uploads_lock:
+        item = uploads.get(upload_id)
+        if not item:
+            return JSONResponse({"error": "Upload not found"}, status_code=404)
+        if item["status"] != "uploading":
+            return JSONResponse({"error": "Upload is paused or inactive"}, status_code=409)
+        temp = Path(item["temp"])
+        target = STORAGE_DIR / item["name"]
+        name = item["name"]
+        size = item["size"]
+    if not temp.is_file() or size != item["total"]:
+        return JSONResponse({"error": "Upload is incomplete"}, status_code=400)
+    temp.replace(target)
+    with uploads_lock:
+        uploads.pop(upload_id, None)
+    return {"id": upload_id, "name": name, "size": size, "status": "complete"}
+
+
+@app.delete("/api/upload/{upload_id}")
+async def cancel_upload(upload_id: str):
+    with uploads_lock:
+        item = uploads.pop(upload_id, None)
+    if not item:
+        return JSONResponse({"error": "Upload not found"}, status_code=404)
+    Path(item["temp"]).unlink(missing_ok=True)
+    return {"id": upload_id, "status": "cancelled"}
 
 
 @app.get("/api/download/{filename}")
