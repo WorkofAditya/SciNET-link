@@ -1,145 +1,28 @@
 const $ = id => document.getElementById(id);
 const trafficHistory = [];
-let previousNetwork = null;
-let previousTime = null;
+let previousNetwork = null, previousTime = null, currentPath = '';
 const activeUploads = new Map();
 
-function formatBytes(bytes) {
-  if (!bytes) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  return `${(bytes / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
-}
+function formatBytes(bytes) { if (!bytes) return '0 B'; const units=['B','KB','MB','GB','TB']; const i=Math.min(Math.floor(Math.log(bytes)/Math.log(1024)),units.length-1); return `${(bytes/1024**i).toFixed(i?1:0)} ${units[i]}`; }
 function formatRate(bytes) { return `${formatBytes(bytes)}/s`; }
-function formatUptime(seconds) {
-  const d = Math.floor(seconds / 86400); seconds %= 86400;
-  const h = Math.floor(seconds / 3600); seconds %= 3600;
-  const m = Math.floor(seconds / 60); const s = seconds % 60;
-  return `${d ? `${String(d).padStart(2, '0')}:` : ''}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-function updateTraffic(network) {
-  const now = performance.now(); let down = 0; let up = 0;
-  if (previousNetwork && previousTime) {
-    const elapsed = Math.max((now - previousTime) / 1000, 0.1);
-    down = Math.max(0, network.received - previousNetwork.received) / elapsed;
-    up = Math.max(0, network.sent - previousNetwork.sent) / elapsed;
-  }
-  previousNetwork = network; previousTime = now;
-  $('downloadRate').textContent = formatRate(down); $('uploadRate').textContent = formatRate(up);
-  $('receivedTotal').textContent = formatBytes(network.received); $('sentTotal').textContent = formatBytes(network.sent);
-  trafficHistory.push(down + up); if (trafficHistory.length > 40) trafficHistory.shift();
-  const max = Math.max(...trafficHistory, 1);
-  $('networkLine').setAttribute('points', trafficHistory.map((value, index) => `${(trafficHistory.length === 1 ? 0 : index / (trafficHistory.length - 1) * 600).toFixed(1)},${(140 - (value / max) * 120).toFixed(1)}`).join(' '));
-}
-function updateSystem(data) {
-  $('hostname').textContent = data.hostname.toUpperCase();
-  $('cpu').textContent = Math.round(data.cpu); $('cpuLoad').textContent = `${Math.round(data.cpu)}%`; $('cpuBar').style.width = `${Math.min(data.cpu, 100)}%`;
-  $('ram').textContent = Math.round(data.memory.percent); $('ramLoad').textContent = `${Math.round(data.memory.percent)}%`; $('ramBar').style.width = `${Math.min(data.memory.percent, 100)}%`; $('ramDetail').textContent = `${formatBytes(data.memory.used)} / ${formatBytes(data.memory.total)}`;
-  $('disk').textContent = Math.round(data.disk.percent); $('diskLoad').textContent = `${Math.round(data.disk.percent)}%`; $('diskBar').style.width = `${Math.min(data.disk.percent, 100)}%`; $('diskDetail').textContent = `${formatBytes(data.disk.used)} / ${formatBytes(data.disk.total)}`;
-  $('uptime').textContent = formatUptime(data.uptime); $('deviceCount').textContent = data.device_count; updateTraffic(data.network); renderDevices(data.devices || []); renderServerUploads(data.uploads || []);
-}
-function deviceName(device) {
-  if (device.type === 'FTP') return 'FTP client'; if (device.type === 'Network') return 'Network device';
-  const agent = device.agent || ''; if (/Android/i.test(agent)) return 'Android device'; if (/iPhone|iPad/i.test(agent)) return 'Apple device'; if (/Windows/i.test(agent)) return 'Windows device'; return 'Web browser';
-}
-function deviceIcon(device) {
-  if (device.type === 'FTP') return '↕'; if (device.type === 'Network') return '⌁';
-  const agent = device.agent || ''; if (/Android/i.test(agent)) return '▣'; if (/iPhone|iPad/i.test(agent)) return '▯'; return '⌘';
-}
-function renderDevices(devices) {
-  const list = $('deviceList'); if (!devices.length) { list.innerHTML = '<div class="empty">No devices detected.</div>'; return; }
-  list.innerHTML = devices.map(device => `<div class="device"><div class="device-icon">${deviceIcon(device)}</div><div class="device-info"><div class="device-name">${escapeHtml(deviceName(device))}</div><div class="device-meta">${escapeHtml(device.ip)}${device.mac ? ` · ${escapeHtml(device.mac)}` : device.port ? `:${device.port}` : ''}</div></div><span class="device-type">${escapeHtml(device.type)}</span></div>`).join('');
-}
-async function loadFiles() {
-  const response = await fetch('/api/files'); const data = await response.json(); const list = $('fileList');
-  if (!data.files.length) { list.innerHTML = '<div class="empty">No files in storage.</div>'; return; }
-  list.innerHTML = data.files.map(file => `<div class="file-row"><div><div class="file-name">${escapeHtml(file.name)}</div><div class="file-size">${formatBytes(file.size)}</div></div><a class="download" href="/api/download/${encodeURIComponent(file.name)}">DOWNLOAD ↓</a></div>`).join('');
-}
-function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char])); }
-
-function createUploadRow(file) {
-  const row = document.createElement('div'); row.className = 'upload-item upload-progress';
-  row.innerHTML = `<div class="upload-top"><span class="upload-name">${escapeHtml(file.name)}</span><span class="upload-percent">0%</span></div><div class="upload-track"><i></i></div><div class="upload-bottom"><span class="upload-status">Starting...</span><span class="upload-speed">0 B/s</span><span class="upload-size">0 / ${formatBytes(file.size)}</span></div><div class="upload-actions"><button class="button upload-pause">PAUSE</button><button class="button upload-cancel">CANCEL</button></div>`;
-  $('uploadList').prepend(row);
-  return row;
-}
-
-async function uploadWithProgress(file, row) {
-  const start = await fetch('/api/upload/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: file.name, size: file.size }) });
-  if (!start.ok) throw new Error('Could not start upload');
-  const { id } = await start.json();
-  const state = { id, file, row, paused: false, cancelled: false, controller: null, uploaded: 0, started: performance.now(), speed: 0 };
-  activeUploads.set(id, state);
-  const bar = row.querySelector('.upload-track i'); const percent = row.querySelector('.upload-percent'); const status = row.querySelector('.upload-status'); const speed = row.querySelector('.upload-speed'); const size = row.querySelector('.upload-size'); const pause = row.querySelector('.upload-pause'); const cancel = row.querySelector('.upload-cancel');
-  const update = () => { const value = file.size ? state.uploaded / file.size * 100 : 100; bar.style.width = `${value}%`; percent.textContent = `${Math.floor(value)}%`; size.textContent = `${formatBytes(state.uploaded)} / ${formatBytes(file.size)}`; speed.textContent = formatRate(state.speed); };
-  pause.onclick = async () => {
-    if (state.cancelled) return;
-    state.paused = !state.paused;
-    pause.textContent = state.paused ? 'RESUME' : 'PAUSE';
-    status.textContent = state.paused ? 'Paused' : 'Uploading';
-    if (state.paused) state.controller?.abort();
-    else run();
-  };
-  cancel.onclick = async () => {
-    if (state.cancelled) return;
-    state.cancelled = true; state.controller?.abort(); pause.disabled = true; cancel.disabled = true; status.textContent = 'Cancelling...';
-    try { await fetch(`/api/upload/${id}`, { method: 'DELETE' }); } catch {}
-    activeUploads.delete(id); status.textContent = 'Cancelled'; speed.textContent = 'Stopped';
-  };
-  async function run() {
-    if (state.cancelled || state.paused || state.uploaded >= file.size) return;
-    status.textContent = 'Uploading';
-    while (!state.cancelled && !state.paused && state.uploaded < file.size) {
-      const end = Math.min(state.uploaded + 1024 * 1024, file.size);
-      const chunk = file.slice(state.uploaded, end);
-      state.controller = new AbortController();
-      const chunkStarted = performance.now();
-      try {
-        const response = await fetch(`/api/upload/${id}/chunk`, { method: 'POST', body: chunk, signal: state.controller.signal, headers: { 'Content-Type': 'application/octet-stream' } });
-        if (!response.ok) throw new Error('Chunk upload failed');
-        const result = await response.json();
-        state.uploaded = result.received;
-        const elapsed = Math.max((performance.now() - chunkStarted) / 1000, 0.001);
-        state.speed = chunk.size / elapsed;
-        update();
-      } catch (error) {
-        if (state.paused || state.cancelled || error.name === 'AbortError') return;
-        status.textContent = 'Failed'; throw error;
-      }
-    }
-    if (state.cancelled || state.paused) return;
-    const finish = await fetch(`/api/upload/${id}/finish`, { method: 'POST' });
-    if (!finish.ok) throw new Error('Could not finish upload');
-    state.uploaded = file.size; state.speed = 0; bar.style.width = '100%'; percent.textContent = '100%'; status.textContent = 'Complete'; speed.textContent = 'Done'; size.textContent = formatBytes(file.size); pause.remove(); cancel.remove(); activeUploads.delete(id); await loadFiles();
-  }
-  await run();
-}
-
-function renderServerUploads(uploads) {
-  for (const item of uploads) {
-    const local = activeUploads.get(item.id);
-    if (!local) continue;
-    local.uploaded = item.size; local.speed = item.speed || local.speed;
-    const total = item.total || local.file.size; const value = total ? item.size / total * 100 : 0;
-    local.row.querySelector('.upload-track i').style.width = `${value}%`; local.row.querySelector('.upload-percent').textContent = `${Math.floor(value)}%`; local.row.querySelector('.upload-size').textContent = `${formatBytes(item.size)} / ${formatBytes(total)}`; local.row.querySelector('.upload-speed').textContent = formatRate(item.speed || 0);
-  }
-}
-async function uploadFiles(files) {
-  for (const file of files) {
-    const row = createUploadRow(file);
-    uploadWithProgress(file, row).catch(() => { row.querySelector('.upload-status').textContent = 'Failed'; });
-  }
-}
-
-const fileInput = $('fileInput');
-fileInput.addEventListener('change', () => { uploadFiles([...fileInput.files]); fileInput.value = ''; });
-const dropzone = $('dropzone');
-for (const event of ['dragenter', 'dragover']) dropzone.addEventListener(event, e => { e.preventDefault(); dropzone.classList.add('drag'); });
-for (const event of ['dragleave', 'drop']) dropzone.addEventListener(event, e => { e.preventDefault(); dropzone.classList.remove('drag'); });
-dropzone.addEventListener('drop', e => uploadFiles([...e.dataTransfer.files]));
-$('refresh').addEventListener('click', loadFiles);
-function connectSocket() {
-  const protocol = location.protocol === 'https:' ? 'wss' : 'ws'; const socket = new WebSocket(`${protocol}://${location.host}/ws`);
-  socket.onopen = () => { $('connectionText').textContent = 'ONLINE'; }; socket.onmessage = event => updateSystem(JSON.parse(event.data)); socket.onclose = () => { $('connectionText').textContent = 'RECONNECTING'; setTimeout(connectSocket, 1500); };
-}
-loadFiles().catch(() => { $('fileList').innerHTML = '<div class="empty">Storage unavailable.</div>'; }); connectSocket();
+function formatUptime(seconds) { const d=Math.floor(seconds/86400); seconds%=86400; const h=Math.floor(seconds/3600); seconds%=3600; const m=Math.floor(seconds/60); const s=seconds%60; return `${d?`${String(d).padStart(2,'0')}:`:''}${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; }
+function escapeHtml(value) { return String(value).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+function updateTraffic(network) { const now=performance.now(); let down=0,up=0; if(previousNetwork&&previousTime){const e=Math.max((now-previousTime)/1000,.1);down=Math.max(0,network.received-previousNetwork.received)/e;up=Math.max(0,network.sent-previousNetwork.sent)/e;} previousNetwork=network;previousTime=now;$('downloadRate').textContent=formatRate(down);$('uploadRate').textContent=formatRate(up);$('receivedTotal').textContent=formatBytes(network.received);$('sentTotal').textContent=formatBytes(network.sent);trafficHistory.push(down+up);if(trafficHistory.length>40)trafficHistory.shift();const max=Math.max(...trafficHistory,1);$('networkLine').setAttribute('points',trafficHistory.map((v,i)=>`${(trafficHistory.length===1?0:i/(trafficHistory.length-1)*600).toFixed(1)},${(140-v/max*120).toFixed(1)}`).join(' ')); }
+function updateSystem(data) { $('hostname').textContent=data.hostname.toUpperCase();$('cpu').textContent=Math.round(data.cpu);$('cpuLoad').textContent=`${Math.round(data.cpu)}%`;$('cpuBar').style.width=`${Math.min(data.cpu,100)}%`;$('ram').textContent=Math.round(data.memory.percent);$('ramLoad').textContent=`${Math.round(data.memory.percent)}%`;$('ramBar').style.width=`${Math.min(data.memory.percent,100)}%`;$('ramDetail').textContent=`${formatBytes(data.memory.used)} / ${formatBytes(data.memory.total)}`;$('disk').textContent=Math.round(data.disk.percent);$('diskLoad').textContent=`${Math.round(data.disk.percent)}%`;$('diskBar').style.width=`${Math.min(data.disk.percent,100)}%`;$('diskDetail').textContent=`${formatBytes(data.disk.used)} / ${formatBytes(data.disk.total)}`;$('uptime').textContent=formatUptime(data.uptime);$('deviceCount').textContent=data.device_count;updateTraffic(data.network);renderDevices(data.devices||[]);renderServerUploads(data.uploads||[]);}
+function deviceName(d){if(d.type==='Host')return d.agent||'SciNET Host';if(d.type==='FTP')return 'FTP client';const a=d.agent||'';if(/Android/i.test(a))return 'Android device';if(/iPhone|iPad/i.test(a))return 'Apple device';if(/Windows/i.test(a))return 'Windows device';return 'Web browser';}
+function deviceIcon(d){if(d.type==='Host')return '▣';if(d.type==='FTP')return '↕';const a=d.agent||'';if(/Android/i.test(a))return '▣';if(/iPhone|iPad/i.test(a))return '▯';return '⌘';}
+function renderDevices(devices){const list=$('deviceList');if(!devices.length){list.innerHTML='<div class="empty">No devices connected.</div>';return;}list.innerHTML=devices.map(d=>`<div class="device"><div class="device-icon">${deviceIcon(d)}</div><div class="device-info"><div class="device-name">${escapeHtml(deviceName(d))}</div><div class="device-meta">${escapeHtml(d.ip)}${d.port?`:${d.port}`:''}${d.mac?` · ${escapeHtml(d.mac)}`:''}</div></div><span class="device-type">${escapeHtml(d.type)}</span></div>`).join('');}
+async function loadFiles(path=currentPath){currentPath=path||'';const r=await fetch(`/api/files?path=${encodeURIComponent(currentPath)}`);const data=await r.json();if(!r.ok)throw new Error(data.error||'Storage unavailable');$('breadcrumbs').textContent=`STORAGE${currentPath?` / ${currentPath.split('/').map(escapeHtml).join(' / ')}`:''}`;const list=$('fileList');if(!data.files.length){list.innerHTML='<div class="empty">Folder is empty.</div>';return;}list.innerHTML=data.files.map(f=>{const safe=escapeHtml(f.path);if(f.type==='folder')return `<div class="file-row folder-row" data-path="${safe}"><div><div class="file-name">📁 ${escapeHtml(f.name)}</div><div class="file-size">FOLDER</div></div><div class="file-actions"><button class="download open-folder" data-path="${safe}">OPEN</button><button class="download delete-item" data-path="${safe}">DELETE</button></div></div>`;return `<div class="file-row"><div><div class="file-name">${escapeHtml(f.name)}</div><div class="file-size">${formatBytes(f.size)}</div></div><div class="file-actions"><a class="download" href="/api/download?path=${encodeURIComponent(f.path)}">DOWNLOAD</a><button class="download delete-item" data-path="${safe}">DELETE</button></div></div>`;}).join('');list.querySelectorAll('.open-folder').forEach(b=>b.onclick=()=>loadFiles(b.dataset.path));list.querySelectorAll('.delete-item').forEach(b=>b.onclick=async()=>{if(confirm(`Delete ${b.dataset.path.split('/').pop()}?`)){await fetch(`/api/files?path=${encodeURIComponent(b.dataset.path)}`,{method:'DELETE'});await loadFiles();loadEvents();}});}
+async function newFolder(){const name=prompt('Folder name');if(!name)return;const r=await fetch('/api/folders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:currentPath,name})});if(!r.ok){const d=await r.json();alert(d.error||'Could not create folder');return;}await loadFiles();loadEvents();}
+function createUploadRow(file){const row=document.createElement('div');row.className='upload-item upload-progress';row.innerHTML=`<div class="upload-top"><span class="upload-name">${escapeHtml(file.name)}</span><span class="upload-percent">0%</span></div><div class="upload-track"><i></i></div><div class="upload-bottom"><span class="upload-status">Starting...</span><span class="upload-speed">0 B/s</span><span class="upload-size">0 / ${formatBytes(file.size)}</span></div><div class="upload-actions"><button class="button upload-pause">PAUSE</button><button class="button upload-cancel">CANCEL</button></div>`;$('uploadList').prepend(row);return row;}
+async function uploadWithProgress(file,row){const start=await fetch('/api/upload/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,size:file.size,path:currentPath})});if(!start.ok)throw Error('Could not start upload');const{id}=await start.json();const s={id,file,row,paused:false,cancelled:false,controller:null,uploaded:0};activeUploads.set(id,s);const bar=row.querySelector('.upload-track i'),pct=row.querySelector('.upload-percent'),status=row.querySelector('.upload-status'),speed=row.querySelector('.upload-speed'),size=row.querySelector('.upload-size'),pause=row.querySelector('.upload-pause'),cancel=row.querySelector('.upload-cancel');const update=()=>{const v=file.size?s.uploaded/file.size*100:100;bar.style.width=`${v}%`;pct.textContent=`${Math.floor(v)}%`;size.textContent=`${formatBytes(s.uploaded)} / ${formatBytes(file.size)}`;speed.textContent=formatRate(s.speed||0);};pause.onclick=()=>{s.paused=!s.paused;pause.textContent=s.paused?'RESUME':'PAUSE';status.textContent=s.paused?'Paused':'Uploading';if(s.paused)s.controller?.abort();else run();};cancel.onclick=async()=>{s.cancelled=true;s.controller?.abort();pause.disabled=cancel.disabled=true;status.textContent='Cancelling...';await fetch(`/api/upload/${id}`,{method:'DELETE'}).catch(()=>{});activeUploads.delete(id);status.textContent='Cancelled';speed.textContent='Stopped';};async function run(){if(s.cancelled||s.paused||s.uploaded>=file.size)return;status.textContent='Uploading';while(!s.cancelled&&!s.paused&&s.uploaded<file.size){const end=Math.min(s.uploaded+1024*1024,file.size),chunk=file.slice(s.uploaded,end);s.controller=new AbortController();const t=performance.now();try{const r=await fetch(`/api/upload/${id}/chunk`,{method:'POST',body:chunk,signal:s.controller.signal,headers:{'Content-Type':'application/octet-stream'}});if(!r.ok)throw Error('Chunk failed');const d=await r.json();s.uploaded=d.received;s.speed=chunk.size/Math.max((performance.now()-t)/1000,.001);update();}catch(e){if(s.paused||s.cancelled||e.name==='AbortError')return;throw e;}}if(s.cancelled||s.paused)return;const r=await fetch(`/api/upload/${id}/finish`,{method:'POST'});if(!r.ok)throw Error('Could not finish');s.uploaded=file.size;s.speed=0;update();status.textContent='Complete';speed.textContent='Done';pause.remove();cancel.remove();activeUploads.delete(id);await loadFiles();loadEvents();}await run();}
+function renderServerUploads(items){for(const i of items){const s=activeUploads.get(i.id);if(!s)continue;s.uploaded=i.size;s.speed=i.speed||s.speed;const total=i.total||s.file.size,v=total?i.size/total*100:0;s.row.querySelector('.upload-track i').style.width=`${v}%`;s.row.querySelector('.upload-percent').textContent=`${Math.floor(v)}%`;s.row.querySelector('.upload-size').textContent=`${formatBytes(i.size)} / ${formatBytes(total)}`;s.row.querySelector('.upload-speed').textContent=formatRate(i.speed||0);}}
+function uploadFiles(files){for(const f of files){const row=createUploadRow(f);uploadWithProgress(f,row).catch(()=>row.querySelector('.upload-status').textContent='Failed');}}
+async function loadEvents(){const r=await fetch('/api/events');const{events}=await r.json();$('eventList').innerHTML=events.length?events.slice(0,30).map(e=>`<div class="event-row"><span class="event-time">${new Date(e.time*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span><span class="event-kind">${escapeHtml(e.kind.toUpperCase())}</span><span class="event-message">${escapeHtml(e.message)}</span></div>`).join(''):'<div class="empty">No activity yet.</div>';}
+async function clipboardGet(){const r=await fetch('/api/clipboard');const d=await r.json();$('clipboardText').value=d.text||'';$('clipboardState').textContent=d.updated?'SYNCED':'READY';}
+async function clipboardSet(){await fetch('/api/clipboard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:$('clipboardText').value,source:'SciNET web'})});$('clipboardState').textContent='SYNCED';loadEvents();}
+$('fileInput').addEventListener('change',()=>{uploadFiles([...$('fileInput').files]);$('fileInput').value='';});
+const dropzone=$('dropzone');for(const e of ['dragenter','dragover'])dropzone.addEventListener(e,x=>{x.preventDefault();dropzone.classList.add('drag');});for(const e of ['dragleave','drop'])dropzone.addEventListener(e,x=>{x.preventDefault();dropzone.classList.remove('drag');});dropzone.addEventListener('drop',e=>uploadFiles([...e.dataTransfer.files]));
+$('newFolder').onclick=newFolder;$('upFolder').onclick=()=>{if(!currentPath)return;const p=currentPath.split('/');p.pop();loadFiles(p.join('/'));};$('copyAddress').onclick=async()=>{await navigator.clipboard.writeText(location.origin);$('copyAddress').textContent='COPIED';setTimeout(()=>$('copyAddress').textContent='COPY ADDRESS',1200);};$('getClipboard').onclick=clipboardGet;$('setClipboard').onclick=clipboardSet;$('clearEvents').onclick=async()=>{await fetch('/api/events',{method:'DELETE'});loadEvents();};
+function connectSocket(){const protocol=location.protocol==='https:'?'wss':'ws';const socket=new WebSocket(`${protocol}://${location.host}/ws`);socket.onopen=()=>{$('connectionText').textContent='ONLINE';};socket.onmessage=e=>updateSystem(JSON.parse(e.data));socket.onclose=()=>{$('connectionText').textContent='RECONNECTING';setTimeout(connectSocket,1500);};}
+loadFiles().catch(()=>{$('fileList').innerHTML='<div class="empty">Storage unavailable.</div>';});loadEvents();clipboardGet();connectSocket();
