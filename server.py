@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio
+import re
 import socket
+import subprocess
 import threading
 import time
 
@@ -73,11 +75,8 @@ def start_ftp():
         def on_connect(self):
             with connected_lock:
                 connected_devices[f"ftp:{self.remote_ip}:{self.remote_port}"] = {
-                    "id": f"ftp:{self.remote_ip}:{self.remote_port}",
-                    "ip": self.remote_ip,
-                    "port": self.remote_port,
-                    "type": "FTP",
-                    "agent": "FTP client",
+                    "id": f"ftp:{self.remote_ip}:{self.remote_port}", "ip": self.remote_ip,
+                    "port": self.remote_port, "type": "FTP", "agent": "FTP client",
                     "connected": time.time(),
                 }
 
@@ -117,6 +116,23 @@ def unregister_mdns():
         mdns = None
 
 
+def discover_devices():
+    devices = {}
+    try:
+        result = subprocess.run(["arp", "-a"], capture_output=True, text=True, timeout=2, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        pattern = re.compile(r"^\s*(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F-]{17})\s+(\w+)", re.MULTILINE)
+        for ip, mac, entry_type in pattern.findall(result.stdout):
+            if entry_type.lower() == "invalid" or ip == local_ip():
+                continue
+            devices[f"arp:{ip}"] = {
+                "id": f"arp:{ip}", "ip": ip, "port": 0, "type": "Network",
+                "agent": f"MAC {mac.upper()}", "connected": time.time(), "mac": mac.upper(),
+            }
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return devices
+
+
 @asynccontextmanager
 async def lifespan(app):
     register_mdns()
@@ -134,8 +150,10 @@ def system_info():
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage(str(BASE_DIR))
     net = psutil.net_io_counters()
+    discovered = discover_devices()
     with connected_lock:
-        devices = list(connected_devices.values())
+        devices = {item["id"]: item for item in connected_devices.values()}
+    devices.update(discovered)
     return {
         "hostname": socket.gethostname(),
         "cpu": psutil.cpu_percent(interval=None),
@@ -143,7 +161,7 @@ def system_info():
         "disk": {"percent": disk.percent, "used": disk.used, "total": disk.total},
         "network": {"sent": net.bytes_sent, "received": net.bytes_recv},
         "uptime": int(time.time() - started_at),
-        "devices": devices,
+        "devices": list(devices.values()),
         "device_count": len(devices),
     }
 
@@ -195,11 +213,8 @@ async def system_socket(websocket: WebSocket):
     user_agent = websocket.headers.get("user-agent", "Browser")
     with connected_lock:
         connected_devices[device_id] = {
-            "id": device_id,
-            "ip": client.host if client else "unknown",
-            "port": client.port if client else 0,
-            "type": "Web",
-            "agent": user_agent[:120],
+            "id": device_id, "ip": client.host if client else "unknown",
+            "port": client.port if client else 0, "type": "Web", "agent": user_agent[:120],
             "connected": time.time(),
         }
     try:
