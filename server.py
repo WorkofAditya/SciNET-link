@@ -185,6 +185,9 @@ async def upload_file(file: UploadFile = File(...)):
                     status = uploads[upload_id]["status"]
                 if status == "cancelling":
                     break
+                if status == "paused":
+                    await asyncio.sleep(0.15)
+                    continue
                 chunk = await file.read(1024 * 1024)
                 if not chunk:
                     break
@@ -233,11 +236,14 @@ async def pause_upload(upload_id: str):
     with uploads_lock:
         if upload_id not in uploads:
             return JSONResponse({"error": "Upload not found"}, status_code=404)
-        if uploads[upload_id]["status"] == "paused":
+        current = uploads[upload_id]["status"]
+        if current == "paused":
             uploads[upload_id]["status"] = "uploading"
-        else:
+        elif current == "uploading":
             uploads[upload_id]["status"] = "paused"
-    return {"status": uploads[upload_id]["status"]}
+        else:
+            return JSONResponse({"status": current})
+        return {"status": uploads[upload_id]["status"]}
 
 
 @app.get("/api/download/{filename}")
