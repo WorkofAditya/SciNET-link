@@ -11,7 +11,7 @@
 <div class="app-shell">
 <header class="topbar"><a class="brand" href="/"><span class="brand-mark">S</span><span class="brand-name">SCINET</span></a><div class="top-status"><span class="status-dot"></span><span id="connectionText">ONLINE</span></div></header>
 <main>
-<section class="page-head"><div><div class="section-kicker">SYSTEM</div><h1>Overview</h1></div><div class="host-info"><span>HOST</span><strong id="hostname">SCINET-CORE</strong></div></section>
+<section class="page-head"><div><div class="section-kicker">SYSTEM</div><h1>Overview</h1></div><div class="head-actions"><div class="host-info"><span>HOST</span><strong id="hostname">SCINET-CORE</strong></div><button class="qr-button" id="openQr" type="button" aria-label="Show QR code">QR</button></div></section>
 <section class="stats-grid">
 <article class="card stat-card"><div class="label">CPU</div><div class="stat-main"><span id="cpu">0</span><small>%</small></div><div class="meter"><i id="cpuBar"></i></div></article>
 <article class="card stat-card"><div class="label">MEMORY</div><div class="stat-main"><span id="ram">0</span><small>%</small></div><div class="detail" id="ramDetail">0 / 0 GB</div><div class="meter"><i id="ramBar"></i></div></article>
@@ -25,16 +25,15 @@
 <section class="card devices-card"><div class="section-head"><div><div class="label">NETWORK</div><h2>Connected devices</h2></div><div class="device-count"><strong id="deviceCount">0</strong><span>devices</span></div></div><div id="deviceList" class="device-list"><div class="empty">Waiting for devices...</div></div></section>
 <section class="phase2-grid">
 <article class="card file-manager"><div class="section-head"><div><div class="label">STORAGE</div><h2>File manager</h2><div class="breadcrumbs" id="breadcrumbs">STORAGE</div></div><div class="manager-actions"><button class="button" id="newFolder">NEW FOLDER</button><button class="button" id="upFolder">UP</button></div></div><div id="fileList" class="file-list"><div class="empty">Loading...</div></div></article>
-<article class="card qr-card"><div class="section-head"><div><div class="label">CONNECTION</div><h2>QR connection</h2></div></div><div class="qr-wrap"><img id="qrCode" src="/api/qr" alt="SciNET connection QR code"></div><code id="webAddress">http://scinet.local:8000</code><div class="qr-actions"><button class="button" id="copyAddress">COPY ADDRESS</button></div></article>
-</section>
-<section class="phase2-grid">
 <article class="card clipboard-card"><div class="section-head"><div><div class="label">SYNC</div><h2>Clipboard</h2></div><span class="pill" id="clipboardState">READY</span></div><textarea id="clipboardText" placeholder="Text shared between SciNET devices..."></textarea><div class="clipboard-actions"><button class="button" id="getClipboard">GET FROM SCINET</button><button class="button" id="setClipboard">SEND TO SCINET</button></div></article>
-<article class="card events-card"><div class="section-head"><div><div class="label">SYSTEM</div><h2>Activity</h2></div><button class="button" id="clearEvents">CLEAR</button></div><div id="eventList" class="event-list"><div class="empty">No activity yet.</div></div></article>
 </section>
+<section class="card events-card"><div class="section-head"><div><div class="label">SYSTEM</div><h2>Activity</h2></div><button class="button" id="clearEvents">CLEAR</button></div><div id="eventList" class="event-list"><div class="empty">No activity yet.</div></div></section>
 <section class="transfer-grid">
 <article class="card transfer-card"><div class="section-head"><div><div class="label">FILES</div><h2>Upload</h2></div><span class="pill">HTTP</span></div><label class="dropzone" id="dropzone"><input type="file" id="fileInput" multiple><span class="upload-mark">↑</span><strong>Choose files</strong><span>or drag and drop</span></label><div id="uploadList" class="upload-list"></div></article>
 <article class="card transfer-card"><div class="section-head"><div><div class="label">TRANSFER SERVICE</div><h2>FTP</h2></div><span class="pill live">ACTIVE</span></div><div class="ftp-grid"><div><span class="ftp-label">ADDRESS</span><code id="ftpAddress">ftp://SCINET-CORE:2121</code></div><div><span class="ftp-label">USERNAME</span><code>scinet</code></div><div><span class="ftp-label">PASSWORD</span><code>scinet</code></div></div><p class="ftp-note">FTP uses the same SciNET storage directory.</p></article>
 </section>
 </main><footer>SCINET</footer>
-</div><script src="/static/app.js"></script>
+</div>
+<div class="modal-backdrop" id="qrModal" hidden><div class="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qrTitle"><div class="section-head"><div><div class="label">CONNECTION</div><h2 id="qrTitle">SciNET QR</h2></div><button class="modal-close" id="closeQr" type="button" aria-label="Close">×</button></div><div class="qr-wrap"><img id="qrCode" src="/api/qr" alt="SciNET local connection QR code"></div><code id="webAddress">Loading local address...</code><div class="qr-actions"><button class="button" id="copyAddress">COPY ADDRESS</button></div></div></div>
+<script src="/static/app.js"></script>
 </body></html>
