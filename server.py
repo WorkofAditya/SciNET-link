@@ -139,7 +139,7 @@ def system_info():
         ip = device.get("ip", "unknown")
         if ip not in unique or device.get("type") == "Web": unique[ip] = device
     host = {"id": "host", "ip": local_ip(), "port": 8000, "type": "Host", "agent": socket.gethostname(), "connected": started_at}
-    devices = [host] + list(unique.values())
+    devices = [host] + [d for d in unique.values() if d.get("ip") != host["ip"]]
     with uploads_lock: active_uploads = [dict(item) for item in uploads.values() if item["status"] in {"uploading", "paused"}]
     return {"hostname": socket.gethostname(), "cpu": psutil.cpu_percent(interval=None), "memory": {"percent": memory.percent, "used": memory.used, "total": memory.total}, "disk": {"percent": disk.percent, "used": disk.used, "total": disk.total}, "network": {"sent": net.bytes_sent, "received": net.bytes_recv}, "uptime": int(time.time() - started_at), "devices": devices, "device_count": len(devices), "uploads": active_uploads}
 
@@ -258,7 +258,7 @@ async def download_path(path: str):
 
 @app.get("/api/qr")
 async def qr_code():
-    image=qrcode.make("http://scinet.local:8000"); buffer=io.BytesIO(); image.save(buffer,format="PNG"); buffer.seek(0); return StreamingResponse(buffer,media_type="image/png")
+    image=qrcode.make(f"http://{local_ip()}:8000"); buffer=io.BytesIO(); image.save(buffer,format="PNG"); buffer.seek(0); return StreamingResponse(buffer,media_type="image/png")
 
 @app.get("/api/events")
 async def get_events():
